@@ -1,5 +1,7 @@
+# -*- coding: utf-8 -*-
 """This module provides the views for the rest interface."""
 
+from __future__ import unicode_literals
 import os, string
 from subprocess import call
 from bson.json_util import loads
@@ -129,7 +131,6 @@ def submit_contribution(request, db_type=None, mdb=None):
     """
     if not request.user.groups.filter(name='contrib').exists():
         raise PermissionDenied("MPFile submission open only to contributors.")
-    project = request.user.institution # institution is required field in User
     contributor = '{} {} <{}>'.format(
         request.user.first_name, request.user.last_name, request.user.email)
     try:
@@ -139,6 +140,8 @@ def submit_contribution(request, db_type=None, mdb=None):
         mpfile = MPFile.from_string(request.POST['mpfile'])
         if len(mpfile.document) > 1:
             raise ValueError('Invalid MPFile: Only single contributions allowed')
+        # institution is required field in User
+        project = mpfile.document[mpfile.ids[0]].get('project', request.user.institution)
         cid = mdb.contrib_ad.submit_contribution(mpfile, contributor, project=project)
     except Exception as ex:
         raise ValueError('"REST Error: "{}"'.format(str(ex)))
@@ -376,6 +379,7 @@ def datasets(request, identifier, db_type=None, mdb=None):
     """
     from mpcontribs.users_modules import get_users_modules, get_user_rester
     contributions = []
+    required_keys = ['title', 'description', 'authors', 'dois']
     for mod_path in get_users_modules():
         if os.path.exists(os.path.join(mod_path, 'rest', 'rester.py')):
             mod_path_split = mod_path.split(os.sep)[-3:]
@@ -384,8 +388,13 @@ def datasets(request, identifier, db_type=None, mdb=None):
             endpoint = request.build_absolute_uri(get_endpoint())
             r = UserRester(request.user.api_key, endpoint=endpoint)
             if r.released and r.query is not None:
+                criteria = {'mp_cat_id': identifier}
+                criteria.update(dict(
+                    ('content.{}'.format(k), {'$exists': 1})
+                    for k in required_keys
+                ))
                 docs = r.query_contributions(
-                    criteria={'mp_cat_id': identifier, 'content.title': {'$exists': 1}},
+                    criteria=criteria,
                     projection={'content.title': 1, 'mp_cat_id': 1}
                 )
                 if docs:
@@ -398,7 +407,7 @@ def datasets(request, identifier, db_type=None, mdb=None):
                     contributions.append(contrib)
     return {"valid_response": True, "response": contributions}
 
-@mapi_func(supported_methods=["POST"], requires_api_key=True)
+@mapi_func(supported_methods=["GET", "POST"], requires_api_key=True)
 def get_card(request, cid, db_type=None, mdb=None):
     """
     @api {post} /card/:cid?API_KEY=:api_key Contribution Card/Preview
@@ -424,43 +433,104 @@ def get_card(request, cid, db_type=None, mdb=None):
             "response": ["<graph-url>"]
         }
     """
-    from mpcontribs.io.core.components import Tree, Plots, render_plot
+    from mpcontribs.io.core.components import HierarchicalData, GraphicalData, render_plot
     from mpcontribs.io.core.utils import nested_dict_iter
     from mpcontribs.io.core.recdict import RecursiveDict, render_dict
     from django.template import Template, Context
     from django.core.urlresolvers import reverse
+    from mpcontribs.config import mp_id_pattern
     prov_keys = loads(request.POST.get('provenance_keys', '["title"]'))
     contrib = mdb.contrib_ad.query_contributions(
         {'_id': ObjectId(cid)},
         projection={'_id': 0, 'mp_cat_id': 1, 'content': 1, 'collaborators': 1}
     )[0]
     mpid = contrib['mp_cat_id']
-    hdata = Tree(contrib['content'])
-    plots = Plots(contrib['content'])
-    if plots:
-        card = []
-        for name, plot in plots.items():
-            filename = '{}_{}.png'.format(mpid, name)
-            cwd = os.path.dirname(__file__)
-            filepath = os.path.abspath(os.path.join(
-                cwd, '..', '..', '..', 'materials_django', 'static', 'img', filename
-            ))
-            if not os.path.exists(filepath):
-                render_plot(plot, filename=filepath)
-            #index = request.build_absolute_uri(reverse('index')[:-1])
-            #imgdir = '/'.join([index.rsplit('/', 1)[0], 'static', 'img'])
-            imgdir = 'http://alpha.materialsproject.org/static/img'
-            fileurl = '/'.join([imgdir, filename])
-            card.append(fileurl)
-    else:
-        info = hdata.get('highlights', hdata.get('explanation', hdata.get('description')))
-        card = RecursiveDict({'info': info}) if info is not None else RecursiveDict()
-        for k,v in hdata.items():
-            if k not in prov_keys and k != 'abbreviations':
-                card[k] = v
-        #card = RecursiveDict()
-        #for idx, (k,v) in enumerate(nested_dict_iter(sub_hdata)):
-        #    card[k] = v
-        #    if idx >= 6:
-        #        break # humans can grasp 7 items quickly
-    return {"valid_response": True, "response": card}
+    hdata = HierarchicalData(contrib['content'])
+    plots = GraphicalData(contrib['content'])
+    title = hdata.get('title', 'No title available.')
+    descriptions = hdata.get('description', 'No description available.').strip().split('.', 1)
+    description = '{}.'.format(descriptions[0])
+    if len(descriptions) > 1 and descriptions[1]:
+        description += ''' <a href="#"
+        class="read_more">More &raquo;</a><span class="more_text"
+        hidden>{}</span>'''.format(descriptions[1])
+    authors = hdata.get('authors', 'No authors available.').split(',', 1)
+    provenance = '<h5 style="margin: 5px;">{}'.format(authors[0])
+    if len(authors) > 1:
+        provenance += '''<button class="btn btn-sm btn-link"
+        data-toggle="tooltip" data-placement="bottom" data-html="true"
+        data-container="body" title="{}" style="padding: 0px 0px 0px 3px;"
+        >et al.</a>'''.format(authors[1].strip().replace(', ', '<br/>'))
+    provenance += '</h5>'
+    urls = hdata.get('urls', {}).values()
+    provenance += ''.join(['''<a href={}
+        class="btn btn-link" role=button style="padding: 0"
+        target="_blank"><i class="fa fa-book fa-border fa-lg"></i></a>'''.format(x)
+        for x in urls if x
+    ])
+    #if plots:
+    #    card = []
+    #    for name, plot in plots.items():
+    #        filename = '{}_{}.png'.format(mpid, name)
+    #        cwd = os.path.dirname(__file__)
+    #        filepath = os.path.abspath(os.path.join(
+    #            cwd, '..', '..', 'webtzite', 'static', 'img', filename
+    #        ))
+    #        if not os.path.exists(filepath):
+    #            render_plot(plot, filename=filepath)
+    #        index = request.build_absolute_uri(reverse('webtzite_index')[:-1])
+    #        imgdir = '/'.join([index.rsplit('/', 1)[0], 'static', 'img'])
+    #        fileurl = '/'.join([imgdir, filename])
+    #        card.append(fileurl)
+    #else:
+    data = RecursiveDict()
+    for idx, (k,v) in enumerate(hdata.get('data', {}).items()):
+        data[k] = v
+        if idx >= 6:
+            break # humans can grasp 7 items quickly
+    data = render_dict(data, webapp=True)
+    is_mp_id = mp_id_pattern.match(mpid)
+    collection = 'materials' if is_mp_id else 'compositions'
+    more = reverse('mpcontribs_explorer_contribution', args=[collection, cid])
+    project = hdata.get('project')
+    if project is not None:
+        landing_page = reverse('mpcontribs_users_{}_explorer_index'.format(project))
+    card = '''
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <h4 class="panel-title">
+                <a href="{}" target="_blank">{}</a>
+                <a class="btn-sm btn-default pull-right" role="button"
+                   style=" margin-top:-6px;"
+                   href="{}" target="_blank">More Info</a>
+            </h4>
+        </div>
+        <div class="panel-body" style="padding-left: 0px">
+            <div class="col-md-12" style="padding-top: 0px">
+                <div class="well pull-right"
+                style="padding: 5px 5px 5px 5px; margin-bottom: 2px;
+                margin-left: 5px;">{}</div>
+                <blockquote class="blockquote"
+                style="font-size: 13px; padding: 0px 10px;">{}</blockquote>
+            </div>
+            <div class="col-md-12" style="padding-right: 0px;">{}</div>
+        </div>
+    </div>
+    <script>
+    requirejs(['config'], function() {{
+        require(['jquery', 'bootstrap'], function() {{
+            $(function(){{
+                $("a.read_more").click(function(event){{
+                    event.preventDefault();
+                    $(this).parents(".blockquote").find(".more_text").show();
+                    $(this).parents(".blockquote").find(".read_more").hide();
+                }});
+                $('.btn-link').tooltip();
+            }});
+        }});
+    }});
+    </script>
+    '''.format(
+            landing_page, title, more, provenance, description, data
+    ).replace('\n', '')
+    return {"valid_response": True, "response": ' '.join(card.split())}

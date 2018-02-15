@@ -1,27 +1,30 @@
+# -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 import uuid, json
 from pandas import DataFrame
 from mpcontribs.config import mp_level01_titles, mp_id_pattern, object_id_pattern
+from mpcontribs.io.core.utils import nest_dict
 from recdict import RecursiveDict
-from utils import disable_ipython_scrollbar
+from utils import disable_ipython_scrollbar, clean_value
 from IPython.display import display_html, display, HTML, Image
-
-class Tree(RecursiveDict):
-    """class to hold and display single tree of hierarchical data"""
-    def __init__(self, content):
-        super(Tree, self).__init__(
-            (key, value) for key, value in content.iteritems()
-            if key not in mp_level01_titles[2:] and \
-            not key.startswith(mp_level01_titles[1])
-        )
 
 class HierarchicalData(RecursiveDict):
     """class to hold and display all hierarchical data in MPFile"""
     def __init__(self, document):
-        super(HierarchicalData, self).__init__(
-            (identifier, Tree(content))
-            for identifier, content in document.iteritems()
-        )
+        from pymatgen import Structure
+        super(HierarchicalData, self).__init__()
+        scope = []
+        for key, value in document.iterate():
+            if isinstance(value, Table) or isinstance(value, Structure):
+                continue
+            level, key = key
+            level_reduction = bool(level < len(scope))
+            if level_reduction:
+                del scope[level:]
+            if value is None:
+                scope.append(key)
+            elif mp_level01_titles[2] not in scope:
+                self.rec_update(nest_dict({key: value}, scope))
 
     @property
     def general(self):
@@ -41,15 +44,19 @@ def get_backgrid_table(df):
     """Backgrid-conform dict from DataFrame"""
     # shorten global import times by importing django here
     import numpy as np
+    from mpcontribs.io.core.utils import get_composition_from_string
     from django.core.validators import URLValidator
     from django.core.exceptions import ValidationError
     from pandas import MultiIndex
+    import pymatgen.util as pmg_util
+    from pymatgen.core.composition import CompositionError
+
     val = URLValidator()
     table = dict()
-    nrows = df.shape[0]
     nrows_max = 200
+    nrows = df.shape[0]
     if nrows > nrows_max:
-        df = df.head(n=nrows_max)
+        df = Table(df.head(n=nrows_max))
     numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
 
     if isinstance(df.index, MultiIndex):
@@ -65,25 +72,35 @@ def get_backgrid_table(df):
         if not col.startswith('level_') and col not in numeric_columns:
             is_url_column, prev_unit, old_col = True, None, col
 
-            for row_index in xrange(nrows):
+            for row_index in xrange(df.shape[0]):
                 cell = unicode(df.iat[row_index, col_index])
                 cell_split = cell.split(' ', 1)
+
                 if not cell or len(cell_split) == 1: # empty cell or no space
+                    is_url_column = bool(not cell or mp_id_pattern.match(cell))
                     if is_url_column:
-                        is_url_column = bool(not cell or mp_id_pattern.match(cell))
-                        if is_url_column:
-                            if cell:
-                                value = 'https://materialsproject.org/materials/{}'.format(cell)
-                                table['rows'][row_index][col] = value
-                        else:
+                        if cell:
+                            value = 'https://materialsproject.org/materials/{}'.format(cell)
+                            table['rows'][row_index][col] = value
+                    elif cell:
+                        try:
+                            composition = get_composition_from_string(cell)
+                            composition = pmg_util.string.unicodeify(composition)
+                            table['rows'][row_index][col] = composition
+                        except (CompositionError, ValueError):
                             try:
                                 val(cell)
                                 is_url_column = True
                             except ValidationError:
-                                # is_url_column already set to False
                                 break
+
                 else:
                     value, unit = cell_split # TODO convert cell_split[0] to float?
+                    try:
+                        float(value) # unit is only a unit if value is number
+                    except:
+                        is_url_column = False
+                        continue
                     table['rows'][row_index].pop(old_col)
                     if prev_unit is None:
                         is_url_column = False
@@ -137,6 +154,7 @@ def render_dataframe(df, webapp=False):
           if (table['columns'][idx]['cell'] == 'uri') {
               table['columns'][idx]['formatter'] = _.extend({}, Backgrid.CellFormatter.prototype, {
                   fromRaw: function (rawValue, model) {
+                      if (typeof rawValue === "undefined") { return ''; }
                       var identifier = rawValue.split('/').pop().split('.')[0];
                       if (objectid_regex.test(identifier)) {
                           return identifier.slice(-7);
@@ -172,11 +190,12 @@ def render_dataframe(df, webapp=False):
 class Table(DataFrame):
 
     def to_dict(self):
-        rdct = super(Table, self).to_dict(into=RecursiveDict)
-        rdct.rec_update({
-            "@module": self.__class__.__module__,
-            "@class": self.__class__.__name__
-        })
+        for col in self.columns:
+            self[col] = self[col].apply(lambda x: clean_value(x, max_dgts=6))
+        rdct = super(Table, self).to_dict(orient='split', into=RecursiveDict)
+        rdct.pop('index')
+        rdct["@module"] = self.__class__.__module__
+        rdct["@class"] = self.__class__.__name__
         return rdct
 
     @classmethod
@@ -185,7 +204,7 @@ class Table(DataFrame):
             (k, v) for k, v in rdct.iteritems()
             if k not in ['@module', '@class']
         )
-        return super(Table, cls).from_dict(d)
+        return cls(d['data'], columns=d['columns'])
 
     def _ipython_display_(self):
         disable_ipython_scrollbar()
@@ -193,11 +212,10 @@ class Table(DataFrame):
 
 class Tables(RecursiveDict):
     """class to hold and display multiple data tables"""
-    def __init__(self, content):
+    def __init__(self, content=RecursiveDict()):
         super(Tables, self).__init__(
-            (key, Table.from_dict(value))
-            for key, value in content.iteritems()
-            if key.startswith(mp_level01_titles[1])
+            (key, value) for key, value in content.iteritems()
+            if isinstance(value, Table)
         )
 
     def __str__(self):
@@ -205,17 +223,27 @@ class Tables(RecursiveDict):
 
     def _ipython_display_(self):
         for name, table in self.iteritems():
-            if table:
-                display_html('<h3>{}</h3>'.format(name), raw=True)
-                display_html(table)
+            display_html('<h3>{}</h3>'.format(name), raw=True)
+            display_html(table)
 
 class TabularData(RecursiveDict):
     """class to hold and display all tabular data of a MPFile"""
     def __init__(self, document):
-        super(TabularData, self).__init__(
-            (identifier, Tables(content))
-            for identifier, content in document.iteritems()
-        )
+        super(TabularData, self).__init__()
+        from pymatgen import Structure
+        scope = []
+        for key, value in document.iterate():
+            if isinstance(value, Table):
+                self[scope[0]].rec_update({'.'.join(scope[1:]): value})
+            elif not isinstance(value, Structure):
+                level, key = key
+                level_reduction = bool(level < len(scope))
+                if level_reduction:
+                    del scope[level:]
+                if value is None:
+                    scope.append(key)
+                    if scope[0] not in self:
+                        self[scope[0]] = Tables()
 
     def __str__(self):
         return 'mp-ids: {}'.format(' '.join(self.keys()))
@@ -223,7 +251,7 @@ class TabularData(RecursiveDict):
     def _ipython_display_(self):
         disable_ipython_scrollbar()
         for identifier, tables in self.iteritems():
-            if identifier != mp_level01_titles[0] and tables:
+            if isinstance(tables, dict) and tables:
                 display_html('<h2>Tabular Data for {}</h2>'.format(identifier), raw=True)
                 display_html(tables)
 
@@ -253,13 +281,20 @@ def render_plot(plot, webapp=False, filename=None):
             x=plot.table[xaxis].tolist(),
             y=plot.table[axis].tolist(),
             name=axis
-        ) for axis in yaxes]
+        ) for axis in yaxes if 'ₑᵣᵣ' not in axis]
+        for trace in traces:
+            err_axis = trace['name'] + 'ₑᵣᵣ'
+            if err_axis in yaxes:
+                trace['error_y'] = dict(
+                    type='data', array=plot.table[err_axis], visible=True
+                )
         layout.update(dict(
             xaxis = dict(title=xaxis),
             yaxis = dict(
                 title=plot.config['table'],
                 type=plot.config.get('yaxis', {}).get('type', '-')
             ),
+            showlegend=plot.config.get('showlegend', True)
         ))
         fig = dict(data=traces, layout=layout)
     if filename:
@@ -268,7 +303,7 @@ def render_plot(plot, webapp=False, filename=None):
         return
     axis = 'z' if is_3d else 'x'
     npts = len(fig.get('data')[0][axis])
-    static_fig = (is_3d and npts > 15) or (not is_3d and npts > 200)
+    static_fig = (is_3d and npts > 15) or (not is_3d and npts > 700)
     if static_fig:
         from plotly.plotly import image
         img = image.get(fig)
@@ -276,7 +311,7 @@ def render_plot(plot, webapp=False, filename=None):
     else:
         from plotly.offline.offline import _plot_html # long import time
         html = _plot_html(
-            fig, False, '', True, '100%', 525, global_requirejs=True
+            fig, False, '', True, '100%', '100%', global_requirejs=True
         )[0]
         if not webapp:
             return html
@@ -298,12 +333,10 @@ class Plot(object):
 
 class Plots(RecursiveDict):
     """class to hold and display multiple interactive graphs/plots"""
-    def __init__(self, content):
-        plotconfs = content.get(mp_level01_titles[2], RecursiveDict())
-        tables = Tables(content)
+    def __init__(self, tables, plotconfs):
         super(Plots, self).__init__(
             (plotconf['table'], Plot(
-                plotconf, tables['_'.join([mp_level01_titles[1], plotconf['table']])]
+                plotconf, tables[plotconf['table']]
             )) for plotconf in plotconfs.itervalues()
         )
 
@@ -320,9 +353,12 @@ class Plots(RecursiveDict):
 class GraphicalData(RecursiveDict):
     """class to hold and display all interactive graphs/plots of a MPFile"""
     def __init__(self, document):
+        tdata = TabularData(document)
         super(GraphicalData, self).__init__(
-            (identifier, Plots(content))
-            for identifier, content in document.iteritems()
+            (identifier, Plots(
+                tdata[identifier], content[mp_level01_titles[2]]
+            )) for identifier, content in document.iteritems()
+            if mp_level01_titles[2] in content
         )
 
     def __str__(self):

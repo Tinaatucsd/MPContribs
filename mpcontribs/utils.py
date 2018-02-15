@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import unicode_literals, print_function
 import os, re, pwd, six, time, json, sys, pkgutil
 from mpcontribs.io.core.recdict import RecursiveDict
@@ -10,11 +11,11 @@ from importlib import import_module
 from StringIO import StringIO
 sys.stdout.flush()
 
-def submit_mpfile(path_or_mpfile, site='jupyterhub', fmt='archieml'):
+def submit_mpfile(path_or_mpfile, site='jupyterhub', fmt='archieml', project=None):
     test_site = bool('jupyterhub' in site)
     with MPContribsRester(test_site=test_site) as mpr:
         try:
-            yield 'Connection to DB {} at {}? '.format(mpr.dbtype, mpr.preamble) # also checks internet connection
+            yield 'Connection to DB {} at {}? '.format(mpr.dbtype, mpr.preamble)
             ncontribs = sum(1 for contrib in mpr.query_contributions(contributor_only=True))
             yield 'OK ({} contributions).</br> '.format(ncontribs)
             time.sleep(1)
@@ -37,12 +38,12 @@ def submit_mpfile(path_or_mpfile, site='jupyterhub', fmt='archieml'):
                 yield '#'
                 time.sleep(1)
             yield ' NO.</br>'
-            for msg in process_mpfile(path_or_mpfile, target=mpr, fmt=fmt):
+            for msg in process_mpfile(path_or_mpfile, target=mpr, fmt=fmt, project=project):
                 yield msg
         except:
             ex = sys.exc_info()[1]
             yield 'FAILED.</br>'
-            yield str(ex).replace('"',"'")
+            yield unicode(ex).replace('"',"'")
             return
 
 def json_compare(d1, d2):
@@ -54,7 +55,7 @@ def json_compare(d1, d2):
         if a != b:
             raise Exception('{} <====> {}'.format(a.strip(), b.strip()))
 
-def process_mpfile(path_or_mpfile, target=None, fmt='archieml', ids=None):
+def process_mpfile(path_or_mpfile, target=None, fmt='archieml', ids=None, project=None):
     try:
         if isinstance(path_or_mpfile, six.string_types) and \
            not os.path.isfile(path_or_mpfile):
@@ -90,7 +91,8 @@ def process_mpfile(path_or_mpfile, target=None, fmt='archieml', ids=None):
 
                 # always run local "submission" to catch failure before interacting with DB
                 yield 'process #{} ({}) ... '.format(idx, mp_cat_id)
-                doc = cma.submit_contribution(mpfile_single, contributor) # does not use get_string
+                # does not use get_string
+                doc = cma.submit_contribution(mpfile_single, contributor, project=project)
                 cid = doc['_id']
                 cid_short = get_short_object_id(cid)
                 if ids is None or cid_short == ids[1]:
@@ -113,17 +115,22 @@ def process_mpfile(path_or_mpfile, target=None, fmt='archieml', ids=None):
                         if mpfile_single.document != mpfile_single_cmp.document:
                             yield 'check again ... '
                             found_inconsistency = False
+                            # check hierarchical and tabular data
+                            # compare json strings to find first inconsistency
+                            if mpfile_single.hdata != mpfile_single_cmp.hdata:
+                                yield 'hdata not OK:'
+                                json_compare(mpfile_single.hdata, mpfile_single_cmp.hdata)
+                            if mpfile_single.tdata != mpfile_single_cmp.tdata:
+                                yield 'tdata not OK:'
+                                json_compare(mpfile_single.tdata, mpfile_single_cmp.tdata)
                             # check structural data
                             structures_ok = True
                             for name, s1 in mpfile_single.sdata[mp_cat_id].iteritems():
                                 s2 = mpfile_single_cmp.sdata[mp_cat_id][name]
                                 if s1 != s2:
                                     if len(s1) != len(s2):
-                                        yield 'different number of sites: {} -> {}!<br>'.format(len(s1), len(s2))
-                                        structures_ok = False
-                                        break
-                                    if s1.lattice != s2.lattice:
-                                        yield 'lattices different!<br>'
+                                        yield 'different number of sites: {} -> {}!<br>'.format(
+                                                len(s1), len(s2))
                                         structures_ok = False
                                         break
                                     for site in s1:
@@ -137,10 +144,6 @@ def process_mpfile(path_or_mpfile, target=None, fmt='archieml', ids=None):
                                             break
                             if not structures_ok:
                                 continue
-                            # check hierarchical and tabular data
-                            # compare json strings to find first inconsistency
-                            json_compare(mpfile_single.hdata, mpfile_single_cmp.hdata)
-                            json_compare(mpfile_single.tdata, mpfile_single_cmp.tdata)
                             if not found_inconsistency:
                                 # documents are not equal, but all components checked, skip contribution
                                 # should not happen
@@ -149,8 +152,10 @@ def process_mpfile(path_or_mpfile, target=None, fmt='archieml', ids=None):
 
                     if target is not None:
                         yield 'submit ... '
+                        if project is not None:
+                            mpfile_single.insert_top(mp_cat_id, 'project', project)
                         cid = target.submit_contribution(mpfile_single, fmt) # uses get_string
-                    mpfile_single.insert_id(mp_cat_id, cid)
+                    mpfile_single.insert_top(mp_cat_id, 'cid', cid)
                     cid_shorts.append(cid_short)
 
                     if target is not None:
@@ -218,5 +223,5 @@ def process_mpfile(path_or_mpfile, target=None, fmt='archieml', ids=None):
     except:
         ex = sys.exc_info()[1]
         yield 'FAILED.</br>'
-        yield str(ex).replace('"',"'")
+        yield unicode(ex).replace('"',"'")
         return

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import division, unicode_literals
 import six, bson, os
 from importlib import import_module
@@ -46,8 +47,10 @@ class MPContribsRester(MPResterBase):
         return False
 
     def _make_request(self, sub_url, payload=None, method="GET"):
+        from mpcontribs.io.core.recdict import RecursiveDict
         return super(MPContribsRester, self)._make_request(
-          '/'.join([sub_url, self.dbtype]), payload=payload, method=method
+          '/'.join([sub_url, self.dbtype]), payload=payload, method=method,
+          document_class=RecursiveDict
         )
 
     def get_cid_url(self, doc):
@@ -89,11 +92,11 @@ class MPContribsRester(MPResterBase):
         site. Only MPFiles with a single root-level section are allowed
         ("single contribution"). Don't use this function directly but rather go
         through the dedicated command line program `mgc` or through the
-        web UI `MPFileViewer`.
+        web UI `MPContribs Ingester`.
 
         Args:
             filename_or_mpfile: MPFile name, or MPFile object
-            fmt: archieml or custom
+            fmt: archieml
 
         Returns:
             unique contribution ID (ObjectID) for this submission
@@ -238,11 +241,9 @@ class MPContribsRester(MPResterBase):
         cid = bson.ObjectId(cid)
         return self._make_request('/build', payload={'cid': cid, 'flag': int(flag)}, method='POST')
 
-    def get_main_contributions(self, identifier):
-        pass
+    def get_datasets(self, identifier):
+        return self._make_request('/datasets/'+identifier)
 
-    def get_card(self, cid='5956e310043b4b56b253e003',
-        prov_keys=['title', 'url', 'explanation', 'references', 'authors', 'contributor']
-    ):
+    def get_card(self, cid, prov_keys=['title']):
         payload = {"provenance_keys": dumps(prov_keys)}
         return self._make_request('/card/'+cid, payload=payload, method='POST')

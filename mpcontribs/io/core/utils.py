@@ -1,5 +1,7 @@
-import warnings, pandas, numpy, six, collections
+from __future__ import unicode_literals
+import warnings, pandas, numpy, six, collections, string
 from StringIO import StringIO
+from decimal import Decimal
 from mpcontribs.config import mp_level01_titles, mp_id_pattern, csv_comment_char
 
 def flatten_dict(dd, separator='.', prefix=''):
@@ -21,11 +23,11 @@ def get_short_object_id(cid):
         cid_short = str(cid)[:length]
     return cid_short
 
-def make_pair(key, value, sep=u':'):
+def make_pair(key, value, sep=':'):
     """make a key-value pair"""
     if not isinstance(value, six.string_types):
         value = unicode(value)
-    return u'{} '.format(sep).join([key, value])
+    return '{} '.format(sep).join([key, value])
 
 def nest_dict(dct, keys):
     """nest dict under list of keys"""
@@ -40,8 +42,12 @@ def get_composition_from_string(s):
     comp = Composition(s)
     for element in comp.elements:
         Element(element)
-    comp = Composition(comp.get_integer_formula_and_factor()[0])
-    return comp.formula.replace(' ', '')
+    c = comp.get_integer_formula_and_factor()[0]
+    comp = Composition(c)
+    return ''.join([
+        '{}{}'.format(key, int(value) if value > 1 else '')
+        for key, value in comp.as_dict().items()
+    ])
 
 def normalize_root_level(title):
     """convert root-level title into conventional identifier; non-identifiers
@@ -55,48 +61,74 @@ def normalize_root_level(title):
         else:
             return True, title
 
+def clean_value(value, unit='', convert_to_percent=False, max_dgts=3):
+    dgts = max_dgts
+    value = str(value) if not isinstance(value, six.string_types) else value
+    try:
+        value = Decimal(value)
+        dgts = len(value.as_tuple().digits)
+        dgts = max_dgts if dgts > max_dgts else dgts
+    except:
+        return value
+    if convert_to_percent:
+        value = Decimal(value) * Decimal('100')
+        unit = '%'
+    v = '{{:.{}g}}'.format(dgts).format(value)
+    if unit:
+        v += ' {}'.format(unit)
+    return v
+
 def strip_converter(text):
     """http://stackoverflow.com/questions/13385860"""
-    if not text:
-        return numpy.nan
     try:
-        return float(text)
-    except ValueError:
+        text = text.strip()
+        if not text:
+            return numpy.nan
         try:
-            return text.strip()
-        except AttributeError:
+            val = clean_value(text, max_dgts=6)
+            return str(Decimal(val))
+        except:
             return text
+    except AttributeError:
+        return text
 
-def read_csv(body, is_data_section=True):
+def read_csv(body, is_data_section=True, **kwargs):
     """run pandas.read_csv on (sub)section body"""
+    body = body.strip()
     if not body: return None
+    from mpcontribs.io.core.components import Table
     if is_data_section:
-        options = { 'sep': ',', 'header': 0 }
-        if body.startswith('\nlevel_'):
-            options.update({'index_col': [0, 1]})
         cur_line = 1
         while 1:
-            first_line = body.split('\n', cur_line)[cur_line-1]
+            body_split = body.split('\n', cur_line)
+            first_line = body_split[cur_line-1].strip()
             cur_line += 1
-            if not first_line.strip().startswith(csv_comment_char):
+            if first_line and not first_line.startswith(csv_comment_char):
                 break
-        ncols = len(first_line.split(options['sep']))
+        options = {'sep': ',', 'header': 0}
+        header = map(string.strip, first_line.split(options['sep']))
+        body = '\n'.join([options['sep'].join(header), body_split[1]])
+        if first_line.startswith('level_'):
+            options.update({'index_col': [0, 1]})
+        ncols = len(header)
     else:
         options = { 'sep': ':', 'header': None, 'index_col': 0 }
         ncols = 2
-    converters = dict((col,strip_converter) for col in range(ncols))
-    return pandas.read_csv(
+    options.update(**kwargs)
+    converters = dict((col, strip_converter) for col in range(ncols))
+    return Table(pandas.read_csv(
         StringIO(body), comment=csv_comment_char,
         skipinitialspace=True, squeeze=True,
         converters=converters, encoding='utf8',
         **options
-    ).dropna(how='all')
+    ).dropna(how='all'))
 
 def disable_ipython_scrollbar():
-    from IPython.display import display, Javascript
-    display(Javascript("""
-        require("notebook/js/outputarea").OutputArea.prototype._should_scroll=function(){return false;};
-    """))
+    pass
+    #from IPython.display import display, Javascript
+    #display(Javascript("""
+    #    require("notebook/js/outputarea").OutputArea.prototype._should_scroll=function(){return false;};
+    #"""))
 
 def nested_dict_iter(nested, scope=''):
     for key, value in nested.iteritems():

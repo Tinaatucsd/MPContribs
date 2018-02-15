@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+from __future__ import unicode_literals
 import os, re, bson, pandas, nbformat
 from itertools import groupby
 from mpcontribs.io.core.recdict import RecursiveDict
@@ -51,7 +53,7 @@ class MPContributionsBuilder():
             self.materials = RecursiveDict()
             self.compositions = RecursiveDict()
         else:
-            opts = bson.CodecOptions(document_class=bson.SON)
+            opts = bson.CodecOptions(document_class=RecursiveDict)
             self.contributions = self.db.contributions.with_options(codec_options=opts)
             self.materials = self.db.materials.with_options(codec_options=opts)
             self.compositions = self.db.compositions.with_options(codec_options=opts)
@@ -61,7 +63,7 @@ class MPContributionsBuilder():
         from monty.serialization import loadfn
         from pymongo import MongoClient
         config = loadfn(os.path.join(os.environ['DB_LOC'], db_yaml))
-        client = MongoClient(config['host'], config['port'], j=False)
+        client = MongoClient(config['host'], config['port'], j=False, document_class=RecursiveDict)
         db = client[config['db']]
         db.authenticate(config['username'], config['password'])
         return MPContributionsBuilder(db)
@@ -141,34 +143,34 @@ class MPContributionsBuilder():
             "### Hierarchical Data"
         ))
         nb['cells'].append(nbf.new_code_cell("mpfile.hdata[identifier]"))
-        if mpfile.tdata[mp_cat_id]:
+        if mpfile.tdata.get(mp_cat_id):
             nb['cells'].append(nbf.new_markdown_cell("### Tabular Data"))
-        for table_name, table in mpfile.tdata[mp_cat_id].iteritems():
-            nb['cells'].append(nbf.new_markdown_cell(
-                "#### {}".format(table_name)
-            ))
-            nb['cells'].append(nbf.new_code_cell(
-                "mpfile.tdata[identifier]['{}']".format(table_name)
-            ))
-        if mpfile.gdata[mp_cat_id]:
+            for table_name, table in mpfile.tdata[mp_cat_id].iteritems():
+                nb['cells'].append(nbf.new_markdown_cell(
+                    "#### {}".format(table_name)
+                ))
+                nb['cells'].append(nbf.new_code_cell(
+                    "mpfile.tdata[identifier][u'{}']".format(table_name)
+                ))
+        if mpfile.gdata.get(mp_cat_id):
             nb['cells'].append(nbf.new_markdown_cell("### Graphical Data"))
-        for plot_name, plot in mpfile.gdata[mp_cat_id].iteritems():
-            nb['cells'].append(nbf.new_markdown_cell(
-                "#### {}".format(plot_name)
-            ))
-            nb['cells'].append(nbf.new_code_cell(
-                "mpfile.gdata[identifier]['{}']".format(plot_name)
-            ))
+            for plot_name, plot in mpfile.gdata[mp_cat_id].iteritems():
+                nb['cells'].append(nbf.new_markdown_cell(
+                    "#### {}".format(plot_name)
+                ))
+                nb['cells'].append(nbf.new_code_cell(
+                    "mpfile.gdata[identifier][u'{}']".format(plot_name)
+                ))
 
-        if mpfile.sdata[mp_cat_id]:
+        if mpfile.sdata.get(mp_cat_id):
             nb['cells'].append(nbf.new_markdown_cell("### Structural Data"))
-        for structure_name, structure in mpfile.sdata[mp_cat_id].iteritems():
-            nb['cells'].append(nbf.new_markdown_cell(
-                "#### {}".format(structure_name)
-            ))
-            nb['cells'].append(nbf.new_code_cell(
-                "mpfile.sdata[identifier]['{}']".format(structure_name)
-            ))
+            for structure_name, structure in mpfile.sdata[mp_cat_id].iteritems():
+                nb['cells'].append(nbf.new_markdown_cell(
+                    "#### {}".format(structure_name)
+                ))
+                nb['cells'].append(nbf.new_code_cell(
+                    "mpfile.sdata[identifier][u'{}']".format(structure_name)
+                ))
 
         self.ep.preprocess(nb, {'metadata': {'path': self.nbdir}})
 

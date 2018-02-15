@@ -1,5 +1,8 @@
-import bson
+# -*- coding: utf-8 -*-
+from __future__ import unicode_literals
+import bson, six
 from mpcontribs.config import mp_level01_titles, mp_id_pattern
+from mpcontribs.io.core.recdict import RecursiveDict
 from mpcontribs.io.core.utils import get_short_object_id
 from datetime import datetime
 
@@ -13,7 +16,7 @@ class ContributionMongoAdapter(object):
         except:
             self.fake = None
         if self.db is not None:
-            opts = bson.CodecOptions(document_class=bson.SON)
+            opts = bson.CodecOptions(document_class=RecursiveDict)
             self.contributions = self.db.contributions.with_options(codec_options=opts)
             self.materials = self.db.materials.with_options(codec_options=opts)
             self.compositions = self.db.compositions.with_options(codec_options=opts)
@@ -27,11 +30,14 @@ class ContributionMongoAdapter(object):
         config_path = os.path.join(db_loc, db_yaml)
         if os.path.exists(config_path):
             config = loadfn(config_path)
-            client = MongoClient(config['host'], config['port'], j=False)
+            client = MongoClient(
+                config['host'], config['port'],
+                j=False, document_class=RecursiveDict
+            )
             db = client[config['db']]
             db.authenticate(config['username'], config['password'])
         else:
-            client = MongoClient(j=False)
+            client = MongoClient(j=False, document_class=RecursiveDict)
             db = client['mpcontribs']
         return ContributionMongoAdapter(db)
 
@@ -58,8 +64,11 @@ class ContributionMongoAdapter(object):
         elif collection == 'contributions':
             props = [k for k,v in projection.iteritems() if v] + ['collaborators']
         projection = dict((p, 1) for p in props) if props else None
-        if '_id' in crit and not isinstance(crit['_id'], bson.ObjectId):
-            crit['_id'] = bson.ObjectId(crit['_id'])
+        if '_id' in crit:
+            if isinstance(crit['_id'], dict) and '$in' in crit['_id']:
+                crit['_id']['$in'] = map(bson.ObjectId, crit['_id']['$in'])
+            elif isinstance(crit['_id'], six.string_types):
+                crit['_id'] = bson.ObjectId(crit['_id'])
         return coll.find(crit, projection=projection, limit=limit)
 
     def delete_contributions(self, crit):
@@ -87,7 +96,7 @@ class ContributionMongoAdapter(object):
                     cid_short, contributor_email, collaborators, cid_short))
         # prepare document
         doc = { 'collaborators': collaborators, 'mp_cat_id': mp_cat_id, 'content': data }
-        if project is not None: doc['project'] = project
+        doc['project'] = data.get('project', 'other') if project is None else project
         if self.db is None:
             doc['_id'] = cid
             return doc
