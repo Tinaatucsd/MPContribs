@@ -49,7 +49,7 @@ def index(request):
              f2.write(text)
     call(['apidoc', '-f "views.py"', '-f "_apidoc.py"', '--output', 'static'])
     os.chdir(cwd)
-    return redirect(PROXY_URL_PREFIX + '/static_rest/index.html')
+    return redirect(PROXY_URL_PREFIX + '/static/index.html')
 
 @mapi_func(supported_methods=["GET"], requires_api_key=True)
 def check_contributor(request, db_type=None, mdb=None):
@@ -379,7 +379,7 @@ def datasets(request, identifier, db_type=None, mdb=None):
     """
     from mpcontribs.users_modules import get_users_modules, get_user_rester
     contributions = []
-    required_keys = ['title', 'description', 'authors', 'dois']
+    required_keys = ['title', 'description', 'authors', 'urls']
     for mod_path in get_users_modules():
         if os.path.exists(os.path.join(mod_path, 'rest', 'rester.py')):
             mod_path_split = mod_path.split(os.sep)[-3:]

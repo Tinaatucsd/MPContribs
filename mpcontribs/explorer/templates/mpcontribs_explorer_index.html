@@ -1,7 +1,12 @@
 {% extends "home/templates/base/header_footer.html" %}
 {% load staticfiles %}
 {% block extra_css %}
-<link rel="stylesheet" type="text/css" href='{% static "components/chosen/chosen.css" charset="utf-8" %}'/>
+<link rel="stylesheet" href='{% static "components/bootstrap/dist/css/bootstrap.css" %}' charset="utf-8">
+<link rel="stylesheet" href='{% static "components/backgrid/lib/backgrid.css" %}' charset="utf-8">
+<link rel="stylesheet" href='{% static "components/backgrid-paginator/backgrid-paginator.css" %}' charset="utf-8">
+<link rel="stylesheet" href='{% static "components/backgrid-filter/backgrid-filter.css" %}' charset="utf-8">
+<link rel="stylesheet" href='{% static "components/backgrid-grouped-columns/backgrid-grouped-columns.css" %}' charset="utf-8">
+<link rel="stylesheet" href='{% static "components/chosen/chosen.css" charset="utf-8" %}'/>
 <link rel="stylesheet" href='{% static "components/json-human/css/json.human.css" %}' charset="utf-8">
 {% endblock %}
 {% block content %}
