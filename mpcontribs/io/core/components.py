@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 import uuid, json
-from pandas import DataFrame
+import pandas as pd
 from mpcontribs.config import mp_level01_titles, mp_id_pattern, object_id_pattern
 from mpcontribs.io.core.utils import nest_dict
 from recdict import RecursiveDict
@@ -137,7 +137,7 @@ def render_dataframe(df, webapp=False):
         html += "requirejs(['config'], function() {"
     html += """
     require([
-      "backbone", "backgrid", "backgrid-paginator",
+      "backbone", "backgrid", "backgrid-paginator", "backgrid-select-all",
       "backgrid-filter", "backgrid-grouped-columns"
     ], function(Backbone, Backgrid) {
       "use strict";
@@ -148,6 +148,10 @@ def render_dataframe(df, webapp=False):
       var Rows = Backbone.PageableCollection.extend({
           model: Row, mode: "client", state: {pageSize: 20}
       });
+      var ClickableCell = Backgrid.StringCell.extend({
+        events: {"click": "onClick"},
+        onClick: function (e) { Backbone.trigger("cellclicked", e); }
+      })
       var rows = new Rows(table['rows']);
       var objectid_regex = /^[a-f\d]{24}$/i;
       for (var idx in table['columns']) {
@@ -162,6 +166,8 @@ def render_dataframe(df, webapp=False):
                       return identifier;
                   }
               })
+          } else {
+            table['columns'][idx]['cell'] = ClickableCell;
           }
       }
       var header = Backgrid.Extension.GroupedHeader;
@@ -187,7 +193,7 @@ def render_dataframe(df, webapp=False):
 #    html_f = ipython.display_formatter.formatters['text/html']
 #    html_f.for_type(DataFrame, render_dataframe)
 
-class Table(DataFrame):
+class Table(pd.DataFrame):
 
     def to_dict(self):
         for col in self.columns:
@@ -277,17 +283,21 @@ def render_plot(plot, webapp=False, filename=None):
         xaxis, yaxis = plot.config['x'], plot.config.get('y', None)
         yaxes = [yaxis] if yaxis is not None else \
                 [col for col in plot.table.columns if col != xaxis]
-        traces = [dict(
-            x=plot.table[xaxis].tolist(),
-            y=plot.table[axis].tolist(),
-            name=axis
-        ) for axis in yaxes if 'ₑᵣᵣ' not in axis]
+        traces = []
+        for axis in yaxes:
+            if 'ₑᵣᵣ' not in axis:
+                tbl = plot.table[[xaxis, axis]].replace('', pd.np.nan).dropna()
+                traces.append(dict(
+                    x=tbl[xaxis].tolist(), y=tbl[axis].tolist(), name=axis
+                ))
         for trace in traces:
             err_axis = trace['name'] + 'ₑᵣᵣ'
             if err_axis in yaxes:
+                errors = plot.table[err_axis].replace('', pd.np.nan).dropna()
                 trace['error_y'] = dict(
-                    type='data', array=plot.table[err_axis], visible=True
+                    type='data', array=errors, visible=True
                 )
+                trace['mode'] = 'markers'
         layout.update(dict(
             xaxis = dict(title=xaxis),
             yaxis = dict(
@@ -310,16 +320,18 @@ def render_plot(plot, webapp=False, filename=None):
         print type(img)
     else:
         from plotly.offline.offline import _plot_html # long import time
-        html = _plot_html(
+        plot_html = _plot_html(
             fig, False, '', True, '100%', '100%', global_requirejs=True
-        )[0]
+        )
+        html, divid = plot_html[0], plot_html[1]
         if not webapp:
             return html
         plotly_require = 'require(["plotly"], function(Plotly) {'
-        return html.replace(
+        html = html.replace(
             plotly_require,
             'requirejs(["main"], function() { ' + plotly_require
         ).replace('});</script>', '})});</script>')
+        return html, divid
 
 class Plot(object):
     """class to hold and display single interactive graph/plot"""
