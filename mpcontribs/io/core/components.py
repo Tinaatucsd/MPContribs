@@ -329,7 +329,7 @@ def render_plot(plot, webapp=False, filename=None):
         plotly_require = 'require(["plotly"], function(Plotly) {'
         html = html.replace(
             plotly_require,
-            'requirejs(["main"], function() { ' + plotly_require
+            'requirejs(["config"], function() { ' + plotly_require
         ).replace('});</script>', '})});</script>')
         return html, divid
 
