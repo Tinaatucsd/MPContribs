@@ -453,10 +453,10 @@ def get_card(request, cid, db_type=None, mdb=None):
     if embed:
         from selenium import webdriver
         from bs4 import BeautifulSoup
-        options = webdriver.ChromeOptions()
-        options.add_argument("no-sandbox")
+        options = webdriver.FirefoxOptions()
+        #options.add_argument("no-sandbox")
         options.set_headless()
-        browser = webdriver.Chrome(chrome_options=options)
+        browser = webdriver.Firefox(firefox_options=options)
 
     prov_keys = loads(request.POST.get('provenance_keys', '["title"]'))
     contrib = mdb.contrib_ad.query_contributions(
@@ -470,9 +470,8 @@ def get_card(request, cid, db_type=None, mdb=None):
     descriptions = hdata.get('description', 'No description available.').strip().split('.', 1)
     description = '{}.'.format(descriptions[0])
     if len(descriptions) > 1 and descriptions[1]:
-        description += ''' <a href="#"
-        onclick="read_more()" id="read_more">More &raquo;</a><span id="more_text"
-        hidden>{}</span>'''.format(descriptions[1])
+        description += ''' <a onclick="read_more_{}()" id="read_more_{}">More &raquo;</a><span id="more_text_{}"
+        hidden>{}</span>'''.format(cid, cid, cid, descriptions[1])
     authors = hdata.get('authors', 'No authors available.').split(',', 1)
 
     provenance = '<h5 style="margin: 5px;">{}'.format(authors[0])
@@ -563,6 +562,32 @@ def get_card(request, cid, db_type=None, mdb=None):
     .custom {{ padding: 0.5em 0.8em 0.8em 2em; }}
     * html a:hover {{ background: transparent; }}
     .classic {{ background: #000000; color: #FFFFFF; }}
+    .panel {{
+        width: 97%;
+        margin-bottom: 20px;
+        background-color: #fff;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        -webkit-box-shadow: 0 1px 1px rgba(0,0,0,.05);
+        box-shadow: 0 1px 1px rgba(0,0,0,.05);
+    }}
+    .panel-default {{
+        border-color: #ddd;
+    }}
+    .panel-default>.panel-heading {{
+        color: #333;
+        background-color: #f5f5f5;
+        border-color: #ddd;
+    }}
+    .panel-heading {{
+        padding: 10px 15px;
+        border-bottom: 1px solid transparent;
+        border-top-left-radius: 3px;
+        border-top-right-radius: 3px;
+    }}
+    .panel-body {{
+        padding: 15px;
+    }}
     </style>
     <div class="panel panel-default">
         <div class="panel-heading">
@@ -585,13 +610,13 @@ def get_card(request, cid, db_type=None, mdb=None):
         </div>
     </div>
     <script>
-        function read_more() {{
-            document.getElementById("more_text").style.display = 'block';
-            document.getElementById("read_more").style.display = 'none';
+        function read_more_{}() {{
+            document.getElementById("more_text_{}").style.display = 'block';
+            document.getElementById("read_more_{}").style.display = 'none';
         }};
     </script>
     '''.format(
-            landing_page, title, more, provenance, description, data
+            landing_page, title, more, provenance, description, data, cid, cid, cid
     ).replace('\n', '')
 
     return {"valid_response": True, "response": card}

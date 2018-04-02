@@ -57,7 +57,7 @@
     </form>
     <div id="spinner" ></div>
     <script>
-        requirejs(['main'], function() {
+        requirejs(['config'], function() {
             require(["jquery.spin"], function() {
                 $("#spinner").spin('small');
             });
