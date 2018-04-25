@@ -28,7 +28,7 @@
           <a href="{% url 'mpcontribs_portal_index' %}">&laquo; Portal</a>
           <div id="spinner" ></div>
           <script>
-            requirejs(['main'], function() {
+            requirejs(['config'], function() {
                 require(["jquery.spin"], function() { $("#spinner").spin('small'); });
             });
           </script>
