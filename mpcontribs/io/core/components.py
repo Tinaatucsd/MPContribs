@@ -77,7 +77,7 @@ def get_backgrid_table(df):
                 cell_split = cell.split(' ', 1)
 
                 if not cell or len(cell_split) == 1: # empty cell or no space
-                    is_url_column = bool(not cell or mp_id_pattern.match(cell))
+                    is_url_column = bool(is_url_column and (not cell or mp_id_pattern.match(cell)))
                     if is_url_column:
                         if cell:
                             value = 'https://materialsproject.org/materials/{}'.format(cell)
@@ -96,14 +96,13 @@ def get_backgrid_table(df):
 
                 else:
                     value, unit = cell_split # TODO convert cell_split[0] to float?
+                    is_url_column = False
                     try:
                         float(value) # unit is only a unit if value is number
                     except:
-                        is_url_column = False
                         continue
                     table['rows'][row_index].pop(old_col)
                     if prev_unit is None:
-                        is_url_column = False
                         prev_unit = unit
                         col = '{} [{}]'.format(col, unit)
                     table['rows'][row_index][col] = cell if prev_unit != unit else value
@@ -131,6 +130,8 @@ def get_backgrid_table(df):
                     header[k] = [d]
                 else:
                     header[k].append(d)
+            elif k in header:
+                header.pop(k)
 
     for k, skl in header.items():
         units = [sk['unit'] for sk in skl]
@@ -257,10 +258,12 @@ def render_dataframe(df, url=None, total_records=None, webapp=False, paginate=Tr
 class Table(pd.DataFrame):
 
     def to_dict(self):
+        from pandas import MultiIndex
         for col in self.columns:
             self[col] = self[col].apply(lambda x: clean_value(x, max_dgts=6))
         rdct = super(Table, self).to_dict(orient='split', into=RecursiveDict)
-        rdct.pop('index')
+        if not isinstance(self.index, MultiIndex):
+            rdct.pop('index')
         rdct["@module"] = self.__class__.__module__
         rdct["@class"] = self.__class__.__name__
         return rdct
@@ -271,7 +274,11 @@ class Table(pd.DataFrame):
             (k, v) for k, v in rdct.iteritems()
             if k not in ['@module', '@class']
         )
-        return cls(d['data'], columns=d['columns'])
+        index = None
+        if 'index' in d:
+            from pandas import MultiIndex
+            index = MultiIndex.from_tuples(d['index'])
+        return cls(d['data'], columns=d['columns'], index=index)
 
     def _ipython_display_(self):
         disable_ipython_scrollbar()
@@ -374,7 +381,7 @@ def render_plot(plot, webapp=False, filename=None):
         return
     axis = 'z' if is_3d else 'x'
     npts = len(fig.get('data')[0][axis])
-    static_fig = (is_3d and npts > 15) or (not is_3d and npts > 700)
+    static_fig = (is_3d and npts > 150) or (not is_3d and npts > 700)
     if static_fig:
         from plotly.plotly import image
         img = image.get(fig)
